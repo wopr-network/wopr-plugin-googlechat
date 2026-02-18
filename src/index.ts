@@ -425,7 +425,11 @@ async function handleMessage(
   const isDM =
     msg.space.singleUserBotDm === true || msg.space.type === "DM";
 
+<<<<<<< HEAD
   const messageText = msg.argumentText?.trim() ?? msg.text?.trim();
+=======
+  const messageText = msg.argumentText?.trim() ?? msg.text;
+>>>>>>> 40dfb4a (feat: Google Chat channel plugin (WOP-117))
   const sessionKey = buildSessionKey(spaceId, userId, isDM);
 
   const channelRef = {
@@ -556,6 +560,7 @@ async function handleEvent(
 }
 
 // ============================================================================
+<<<<<<< HEAD
 // JWT verification
 // ============================================================================
 
@@ -577,11 +582,17 @@ export async function verifyGoogleChatJwt(
 }
 
 // ============================================================================
+=======
+>>>>>>> 40dfb4a (feat: Google Chat channel plugin (WOP-117))
 // HTTP webhook handler (exported for testing and external registration)
 // ============================================================================
 
 export async function handleWebhook(
+<<<<<<< HEAD
   req: { body: unknown; headers?: Record<string, string | undefined> },
+=======
+  req: { body: unknown },
+>>>>>>> 40dfb4a (feat: Google Chat channel plugin (WOP-117))
   res: {
     status(code: number): { json(body: unknown): void };
     json?(body: unknown): void;
@@ -593,6 +604,7 @@ export async function handleWebhook(
     return;
   }
 
+<<<<<<< HEAD
   // Verify Google-signed JWT when projectNumber is configured
   if (config.projectNumber) {
     const authHeader = req.headers?.["authorization"];
@@ -604,6 +616,8 @@ export async function handleWebhook(
     }
   }
 
+=======
+>>>>>>> 40dfb4a (feat: Google Chat channel plugin (WOP-117))
   try {
     const event = req.body as GoogleChatEvent;
 
@@ -699,6 +713,10 @@ function buildChannelProvider(): ChannelProvider {
           channelId,
           error: String(err),
         });
+<<<<<<< HEAD
+=======
+        throw err;
+>>>>>>> 40dfb4a (feat: Google Chat channel plugin (WOP-117))
       }
     },
 
