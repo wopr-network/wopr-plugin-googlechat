@@ -7,7 +7,7 @@
  */
 
 import path from "node:path";
-import { GoogleAuth } from "google-auth-library";
+import { GoogleAuth, OAuth2Client } from "google-auth-library";
 import { google } from "googleapis";
 import winston from "winston";
 import type {
@@ -425,7 +425,7 @@ async function handleMessage(
   const isDM =
     msg.space.singleUserBotDm === true || msg.space.type === "DM";
 
-  const messageText = msg.argumentText?.trim() ?? msg.text;
+  const messageText = msg.argumentText?.trim() ?? msg.text?.trim();
   const sessionKey = buildSessionKey(spaceId, userId, isDM);
 
   const channelRef = {
@@ -556,11 +556,32 @@ async function handleEvent(
 }
 
 // ============================================================================
+// JWT verification
+// ============================================================================
+
+const _oauth2Client = new OAuth2Client();
+
+export async function verifyGoogleChatJwt(
+  authHeader: string | undefined,
+  projectNumber: string,
+): Promise<boolean> {
+  if (!authHeader?.startsWith("Bearer ")) return false;
+  const token = authHeader.slice(7);
+  const audience = `https://chat.googleapis.com/${projectNumber}`;
+  try {
+    await _oauth2Client.verifyIdToken({ idToken: token, audience });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// ============================================================================
 // HTTP webhook handler (exported for testing and external registration)
 // ============================================================================
 
 export async function handleWebhook(
-  req: { body: unknown },
+  req: { body: unknown; headers?: Record<string, string | undefined> },
   res: {
     status(code: number): { json(body: unknown): void };
     json?(body: unknown): void;
@@ -570,6 +591,17 @@ export async function handleWebhook(
   if (shuttingDown) {
     res.status(503).json({ text: "Bot is shutting down" });
     return;
+  }
+
+  // Verify Google-signed JWT when projectNumber is configured
+  if (config.projectNumber) {
+    const authHeader = req.headers?.["authorization"];
+    const valid = await verifyGoogleChatJwt(authHeader, config.projectNumber);
+    if (!valid) {
+      logger?.warn?.({ msg: "JWT verification failed" });
+      res.status(401).json({ text: "Unauthorized" });
+      return;
+    }
   }
 
   try {
@@ -667,7 +699,6 @@ function buildChannelProvider(): ChannelProvider {
           channelId,
           error: String(err),
         });
-        throw err;
       }
     },
 
