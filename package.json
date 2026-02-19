@@ -47,5 +47,8 @@
   ],
   "peerDependencies": {
     "wopr": ">=0.0.1"
+  },
+  "release": {
+    "extends": "@wopr-network/semantic-release-config"
   }
 }
