@@ -16,13 +16,11 @@ import type {
   ChannelMessageParser,
   ChannelProvider,
   ConfigSchema,
-  WOPRPlugin,
-  WOPRPluginContext,
-} from "./types.js";
-import type {
   GoogleChatConfig,
   GoogleChatEvent,
   GoogleChatSyncResponse,
+  WOPRPlugin,
+  WOPRPluginContext,
 } from "./types.js";
 
 // ============================================================================
@@ -202,7 +200,7 @@ export function extractUserId(userName: string): string {
 
 export function truncateToGChatLimit(text: string): string {
   if (text.length <= GCHAT_LIMIT) return text;
-  return text.substring(0, GCHAT_LIMIT - 3) + "...";
+  return `${text.substring(0, GCHAT_LIMIT - 3)}...`;
 }
 
 export function formatAsCard(
@@ -275,8 +273,7 @@ export function shouldRespond(
     // Ignore bot messages
     if (msg.sender.type === "BOT") return false;
 
-    const isDM =
-      msg.space.singleUserBotDm === true || msg.space.type === "DM";
+    const isDM = msg.space.singleUserBotDm === true || msg.space.type === "DM";
 
     if (isDM) {
       const policy = cfg.dmPolicy ?? "pairing";
@@ -311,8 +308,7 @@ export function shouldRespond(
 
 async function initGoogleAuth(): Promise<GoogleAuth> {
   const keyPath =
-    config.serviceAccountKeyPath ||
-    process.env.GOOGLE_APPLICATION_CREDENTIALS;
+    config.serviceAccountKeyPath || process.env.GOOGLE_APPLICATION_CREDENTIALS;
 
   if (!keyPath) {
     throw new Error(
@@ -422,8 +418,7 @@ async function handleMessage(
   const spaceId = extractSpaceId(msg.space.name);
   const userId = extractUserId(msg.sender.name);
   const userName = msg.sender.displayName;
-  const isDM =
-    msg.space.singleUserBotDm === true || msg.space.type === "DM";
+  const isDM = msg.space.singleUserBotDm === true || msg.space.type === "DM";
 
   const messageText = msg.argumentText?.trim() ?? msg.text?.trim();
   const sessionKey = buildSessionKey(spaceId, userId, isDM);
@@ -595,7 +590,7 @@ export async function handleWebhook(
 
   // Verify Google-signed JWT when projectNumber is configured
   if (config.projectNumber) {
-    const authHeader = req.headers?.["authorization"];
+    const authHeader = req.headers?.authorization;
     const valid = await verifyGoogleChatJwt(authHeader, config.projectNumber);
     if (!valid) {
       logger?.warn?.({ msg: "JWT verification failed" });
@@ -766,8 +761,7 @@ const plugin: WOPRPlugin = {
       !config.serviceAccountKeyPath &&
       process.env.GOOGLE_APPLICATION_CREDENTIALS
     ) {
-      config.serviceAccountKeyPath =
-        process.env.GOOGLE_APPLICATION_CREDENTIALS;
+      config.serviceAccountKeyPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
     }
     if (!config.projectNumber && process.env.GOOGLE_PROJECT_NUMBER) {
       config.projectNumber = process.env.GOOGLE_PROJECT_NUMBER;

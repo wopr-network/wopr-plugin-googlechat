@@ -7,16 +7,16 @@
 
 // Re-export shared WOPR types for convenience
 export type {
-  WOPRPlugin,
-  WOPRPluginContext,
-  ConfigSchema,
-  ChannelProvider,
+  AgentIdentity,
   ChannelCommand,
   ChannelCommandContext,
   ChannelMessageContext,
   ChannelMessageParser,
-  AgentIdentity,
+  ChannelProvider,
+  ConfigSchema,
   StreamMessage,
+  WOPRPlugin,
+  WOPRPluginContext,
 } from "@wopr-network/plugin-types";
 
 // ============================================================================
