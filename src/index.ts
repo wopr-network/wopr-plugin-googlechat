@@ -98,6 +98,8 @@ const configSchema: ConfigSchema = {
       label: "Service Account Key Path",
       placeholder: "/path/to/service-account.json",
       required: true,
+      secret: true,
+      setupFlow: "paste",
       description: "Path to Google Cloud service account JSON key file",
     },
     {
@@ -106,6 +108,7 @@ const configSchema: ConfigSchema = {
       label: "Project Number",
       placeholder: "123456789",
       required: true,
+      setupFlow: "paste",
       description: "Google Cloud project number (for JWT validation)",
     },
     {
@@ -742,6 +745,7 @@ const plugin: WOPRPlugin = {
       shutdownBehavior: "drain",
       shutdownTimeoutMs: 30_000,
     },
+    configSchema,
   },
 
   async init(ctx: WOPRPluginContext): Promise<void> {
@@ -825,13 +829,23 @@ const plugin: WOPRPlugin = {
       configUnsub = null;
     }
 
+    // Unregister config schema
+    pluginCtx?.unregisterConfigSchema("wopr-plugin-googlechat");
+
     // Unregister channel provider
     pluginCtx?.unregisterChannelProvider("googlechat");
+
+    // Clear channel maps
+    registeredCommands.clear();
+    registeredParsers.clear();
 
     logger?.info("Google Chat plugin shut down");
     chatClient = null;
     channelProvider = null;
     pluginCtx = null;
+
+    // Reset shutdown flag for re-initialization
+    isShuttingDown = false;
   },
 };
 

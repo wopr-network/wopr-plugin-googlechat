@@ -26,8 +26,9 @@
   "author": "TSavo",
   "license": "MIT",
   "dependencies": {
-    "@wopr-network/plugin-types": "^0.2.0",
     "@googleapis/chat": "^44.6.0",
+    "@wopr-network/plugin-types": "^0.2.0",
+    "google-auth-library": "^10.6.1",
     "googleapis": "^144.0.0",
     "winston": "^3.11.0"
   },
