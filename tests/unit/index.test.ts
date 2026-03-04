@@ -16,6 +16,8 @@ import {
   shouldRespond,
   formatAsCard,
   handleWebhook,
+  buildNotificationCard,
+  pendingCallbacks,
 } from "../../src/index.js";
 
 import type { GoogleChatEvent, GoogleChatConfig } from "../../src/types.js";
@@ -402,5 +404,161 @@ describe("message truncation", () => {
     const { truncateToGChatLimit } = await import("../../src/index.js");
     const shortText = "Hello, world!";
     expect(truncateToGChatLimit(shortText)).toBe(shortText);
+  });
+});
+
+// ============================================================================
+// buildNotificationCard tests
+// ============================================================================
+
+describe("buildNotificationCard", () => {
+  it("returns a Cards v2 structure with Accept and Deny buttons", () => {
+    const card = buildNotificationCard("notif-123", "Alice", "WOPR");
+    expect(card).toHaveProperty("cardsV2");
+    expect(card.cardsV2).toHaveLength(1);
+
+    const sections = card.cardsV2[0].card.sections;
+    expect(sections).toHaveLength(2);
+
+    const textWidget = sections[0].widgets[0];
+    expect(textWidget).toHaveProperty("textParagraph");
+    expect((textWidget as any).textParagraph.text).toContain("Alice");
+
+    const buttonWidget = sections[1].widgets[0];
+    expect(buttonWidget).toHaveProperty("buttonList");
+    const buttons = (buttonWidget as any).buttonList.buttons;
+    expect(buttons).toHaveLength(2);
+    expect(buttons[0].text).toBe("Accept");
+    expect(buttons[1].text).toBe("Deny");
+
+    expect(buttons[0].onClick.action.function).toBe("notification_accept");
+    expect(buttons[0].onClick.action.parameters).toContainEqual({
+      key: "notificationId",
+      value: "notif-123",
+    });
+    expect(buttons[1].onClick.action.function).toBe("notification_deny");
+  });
+
+  it("uses pubkey as fallback when from is not provided", () => {
+    const card = buildNotificationCard("notif-456", undefined, "WOPR", "abc123pubkey");
+    const textWidget = card.cardsV2[0].card.sections[0].widgets[0];
+    expect((textWidget as any).textParagraph.text).toContain("abc123pubkey");
+  });
+
+  it("falls back to 'unknown peer' when neither from nor pubkey provided", () => {
+    const card = buildNotificationCard("notif-789", undefined, "WOPR");
+    const textWidget = card.cardsV2[0].card.sections[0].widgets[0];
+    expect((textWidget as any).textParagraph.text).toContain("unknown peer");
+  });
+});
+
+// ============================================================================
+// sendNotification + handleCardClick callback dispatch tests
+// ============================================================================
+
+describe("sendNotification via handleWebhook card click", () => {
+  beforeEach(() => {
+    pendingCallbacks.clear();
+  });
+
+  it("handleCardClick fires onAccept callback for notification_accept action", async () => {
+    const onAccept = vi.fn().mockResolvedValue(undefined);
+    const onDeny = vi.fn().mockResolvedValue(undefined);
+    pendingCallbacks.set("test-notif-1", { callbacks: { onAccept, onDeny }, timer: setTimeout(() => {}, 300000) });
+
+    const event: GoogleChatEvent = {
+      type: "CARD_CLICKED",
+      eventTime: "2026-01-01T00:00:00Z",
+      action: {
+        actionMethodName: "notification_accept",
+        parameters: [{ key: "notificationId", value: "test-notif-1" }],
+      },
+    };
+
+    const req = { body: event };
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() };
+
+    await handleWebhook(req as any, res as any, false);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(onAccept).toHaveBeenCalledOnce();
+    expect(onDeny).not.toHaveBeenCalled();
+    expect(pendingCallbacks.has("test-notif-1")).toBe(false);
+  });
+
+  it("handleCardClick fires onDeny callback for notification_deny action", async () => {
+    const onAccept = vi.fn().mockResolvedValue(undefined);
+    const onDeny = vi.fn().mockResolvedValue(undefined);
+    pendingCallbacks.set("test-notif-2", { callbacks: { onAccept, onDeny }, timer: setTimeout(() => {}, 300000) });
+
+    const event: GoogleChatEvent = {
+      type: "CARD_CLICKED",
+      eventTime: "2026-01-01T00:00:00Z",
+      action: {
+        actionMethodName: "notification_deny",
+        parameters: [{ key: "notificationId", value: "test-notif-2" }],
+      },
+    };
+
+    const req = { body: event };
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() };
+
+    await handleWebhook(req as any, res as any, false);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(onDeny).toHaveBeenCalledOnce();
+    expect(onAccept).not.toHaveBeenCalled();
+    expect(pendingCallbacks.has("test-notif-2")).toBe(false);
+  });
+
+  it("handleCardClick removes entry even if callback throws", async () => {
+    const onAccept = vi.fn().mockRejectedValue(new Error("boom"));
+    pendingCallbacks.set("test-notif-3", { callbacks: { onAccept }, timer: setTimeout(() => {}, 300000) });
+
+    const event: GoogleChatEvent = {
+      type: "CARD_CLICKED",
+      eventTime: "2026-01-01T00:00:00Z",
+      action: {
+        actionMethodName: "notification_accept",
+        parameters: [{ key: "notificationId", value: "test-notif-3" }],
+      },
+    };
+
+    const req = { body: event };
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() };
+
+    await handleWebhook(req as any, res as any, false);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(pendingCallbacks.has("test-notif-3")).toBe(false);
+  });
+
+  it("handleCardClick ignores unknown notification IDs gracefully", async () => {
+    const event: GoogleChatEvent = {
+      type: "CARD_CLICKED",
+      eventTime: "2026-01-01T00:00:00Z",
+      action: {
+        actionMethodName: "notification_accept",
+        parameters: [{ key: "notificationId", value: "nonexistent" }],
+      },
+    };
+
+    const req = { body: event };
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() };
+
+    await handleWebhook(req as any, res as any, false);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+
+  it("handleCardClick still handles non-notification card clicks normally", async () => {
+    const req = { body: makeCardClickEvent() };
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() };
+
+    await handleWebhook(req as any, res as any, false);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    const responseArg = res.json.mock.calls[0][0];
+    expect(responseArg.text).toContain("doSomething");
   });
 });

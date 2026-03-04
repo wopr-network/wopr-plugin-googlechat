@@ -20,6 +20,22 @@ export type {
 } from "@wopr-network/plugin-types";
 
 // ============================================================================
+// Notification types (not yet in @wopr-network/plugin-types)
+// ============================================================================
+
+export interface ChannelNotificationCallbacks {
+  onAccept?: () => Promise<void>;
+  onDeny?: () => Promise<void>;
+}
+
+export interface ChannelNotificationPayload {
+  type: string;
+  from?: string;
+  pubkey?: string;
+  [key: string]: unknown;
+}
+
+// ============================================================================
 // Google Chat Configuration
 // ============================================================================
 
@@ -158,7 +174,7 @@ export type GoogleChatWidget =
           onClick: {
             openLink?: { url: string };
             action?: {
-              actionMethodName: string;
+              function: string;
               parameters?: Array<{ key: string; value: string }>;
             };
           };
