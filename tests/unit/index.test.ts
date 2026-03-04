@@ -431,12 +431,12 @@ describe("buildNotificationCard", () => {
     expect(buttons[0].text).toBe("Accept");
     expect(buttons[1].text).toBe("Deny");
 
-    expect(buttons[0].onClick.action.actionMethodName).toBe("notification_accept");
+    expect(buttons[0].onClick.action.function).toBe("notification_accept");
     expect(buttons[0].onClick.action.parameters).toContainEqual({
       key: "notificationId",
       value: "notif-123",
     });
-    expect(buttons[1].onClick.action.actionMethodName).toBe("notification_deny");
+    expect(buttons[1].onClick.action.function).toBe("notification_deny");
   });
 
   it("uses pubkey as fallback when from is not provided", () => {
