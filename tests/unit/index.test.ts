@@ -464,7 +464,7 @@ describe("sendNotification via handleWebhook card click", () => {
   it("handleCardClick fires onAccept callback for notification_accept action", async () => {
     const onAccept = vi.fn().mockResolvedValue(undefined);
     const onDeny = vi.fn().mockResolvedValue(undefined);
-    pendingCallbacks.set("test-notif-1", { onAccept, onDeny });
+    pendingCallbacks.set("test-notif-1", { callbacks: { onAccept, onDeny }, timer: setTimeout(() => {}, 300000) });
 
     const event: GoogleChatEvent = {
       type: "CARD_CLICKED",
@@ -489,7 +489,7 @@ describe("sendNotification via handleWebhook card click", () => {
   it("handleCardClick fires onDeny callback for notification_deny action", async () => {
     const onAccept = vi.fn().mockResolvedValue(undefined);
     const onDeny = vi.fn().mockResolvedValue(undefined);
-    pendingCallbacks.set("test-notif-2", { onAccept, onDeny });
+    pendingCallbacks.set("test-notif-2", { callbacks: { onAccept, onDeny }, timer: setTimeout(() => {}, 300000) });
 
     const event: GoogleChatEvent = {
       type: "CARD_CLICKED",
@@ -513,7 +513,7 @@ describe("sendNotification via handleWebhook card click", () => {
 
   it("handleCardClick removes entry even if callback throws", async () => {
     const onAccept = vi.fn().mockRejectedValue(new Error("boom"));
-    pendingCallbacks.set("test-notif-3", { onAccept });
+    pendingCallbacks.set("test-notif-3", { callbacks: { onAccept }, timer: setTimeout(() => {}, 300000) });
 
     const event: GoogleChatEvent = {
       type: "CARD_CLICKED",
