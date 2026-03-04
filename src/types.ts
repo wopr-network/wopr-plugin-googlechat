@@ -174,7 +174,7 @@ export type GoogleChatWidget =
           onClick: {
             openLink?: { url: string };
             action?: {
-              actionMethodName: string;
+              function: string;
               parameters?: Array<{ key: string; value: string }>;
             };
           };

@@ -274,7 +274,13 @@ export function buildNotificationCard(
     };
   }>;
 } {
-  const fromLabel = from ?? pubkey ?? "unknown peer";
+  const escapeHtml = (s: string) =>
+    s
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  const safeFromLabel = escapeHtml(from ?? pubkey ?? "unknown peer");
   return {
     cardsV2: [
       {
@@ -286,7 +292,7 @@ export function buildNotificationCard(
               widgets: [
                 {
                   textParagraph: {
-                    text: `Friend request from <b>${fromLabel}</b>`,
+                    text: `Friend request from <b>${safeFromLabel}</b>`,
                   },
                 },
               ],
@@ -300,7 +306,7 @@ export function buildNotificationCard(
                         text: "Accept",
                         onClick: {
                           action: {
-                            actionMethodName: "notification_accept",
+                            function: "notification_accept",
                             parameters: [
                               { key: "notificationId", value: notificationId },
                             ],
@@ -311,7 +317,7 @@ export function buildNotificationCard(
                         text: "Deny",
                         onClick: {
                           action: {
-                            actionMethodName: "notification_deny",
+                            function: "notification_deny",
                             parameters: [
                               { key: "notificationId", value: notificationId },
                             ],
@@ -419,23 +425,31 @@ async function handleCardClick(
     const notifId = params.find((p) => p.key === "notificationId")?.value;
     if (notifId) {
       const callbacks = pendingCallbacks.get(notifId);
-      if (callbacks) {
-        try {
-          if (methodName === "notification_accept") {
-            await callbacks.onAccept?.();
-          } else {
-            await callbacks.onDeny?.();
-          }
-        } catch (error: unknown) {
-          logger?.error?.({
-            msg: `Error in ${methodName} callback`,
-            notifId,
-            error: String(error),
-          });
-        } finally {
-          pendingCallbacks.delete(notifId);
-        }
+      if (!callbacks) {
+        return {
+          actionResponse: { type: "UPDATE_MESSAGE" },
+          text: "Unknown or expired notification.",
+        };
       }
+      try {
+        if (methodName === "notification_accept") {
+          await callbacks.onAccept?.();
+        } else {
+          await callbacks.onDeny?.();
+        }
+      } catch (error: unknown) {
+        logger?.error?.({
+          msg: `Error in ${methodName} callback`,
+          notifId,
+          error: String(error),
+        });
+        pendingCallbacks.delete(notifId);
+        return {
+          actionResponse: { type: "UPDATE_MESSAGE" },
+          text: "An error occurred processing your response.",
+        };
+      }
+      pendingCallbacks.delete(notifId);
       const label =
         methodName === "notification_accept" ? "accepted" : "denied";
       return {
@@ -846,15 +860,21 @@ function buildChannelProvider(): GoogleChatChannelProvider {
         payload.pubkey,
       );
 
+      // Register callbacks BEFORE API call to avoid race condition (Bug 4)
+      if (callbacks) {
+        pendingCallbacks.set(notificationId, callbacks);
+        // 5-minute TTL to prevent stale entry accumulation (Bug 3)
+        setTimeout(
+          () => pendingCallbacks.delete(notificationId),
+          5 * 60 * 1000,
+        );
+      }
+
       try {
         await chatClient.spaces.messages.create({
           parent: spaceName,
           requestBody: cardBody,
         });
-
-        if (callbacks) {
-          pendingCallbacks.set(notificationId, callbacks);
-        }
 
         logger?.info?.({
           msg: "Friend request notification sent",
