@@ -14,11 +14,14 @@ import type {
   AgentIdentity,
   ChannelCommand,
   ChannelMessageParser,
+  ChannelNotificationCallbacks,
+  ChannelNotificationPayload,
   ChannelProvider,
   ConfigSchema,
   GoogleChatConfig,
   GoogleChatEvent,
   GoogleChatSyncResponse,
+  GoogleChatWidget,
   WOPRPlugin,
   WOPRPluginContext,
 } from "./types.js";
@@ -38,10 +41,12 @@ let config: GoogleChatConfig = {};
 let agentIdentity: AgentIdentity = { name: "WOPR", emoji: "robot_face" };
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let chatClient: any = null;
-let channelProvider: ChannelProvider | null = null;
+let channelProvider: GoogleChatChannelProvider | null = null;
 let configUnsub: (() => void) | null = null;
 let isShuttingDown = false;
 let logger: winston.Logger;
+
+export const pendingCallbacks = new Map<string, ChannelNotificationCallbacks>();
 
 // ============================================================================
 // Logger
@@ -255,6 +260,76 @@ export function formatAsCard(
   };
 }
 
+export function buildNotificationCard(
+  notificationId: string,
+  from: string | undefined,
+  agentName: string,
+  pubkey?: string,
+): {
+  cardsV2: Array<{
+    cardId: string;
+    card: {
+      header: { title: string; imageType: "CIRCLE" };
+      sections: Array<{ widgets: Array<GoogleChatWidget> }>;
+    };
+  }>;
+} {
+  const fromLabel = from ?? pubkey ?? "unknown peer";
+  return {
+    cardsV2: [
+      {
+        cardId: `wopr-notif-${notificationId}`,
+        card: {
+          header: { title: agentName || "WOPR", imageType: "CIRCLE" },
+          sections: [
+            {
+              widgets: [
+                {
+                  textParagraph: {
+                    text: `Friend request from <b>${fromLabel}</b>`,
+                  },
+                },
+              ],
+            },
+            {
+              widgets: [
+                {
+                  buttonList: {
+                    buttons: [
+                      {
+                        text: "Accept",
+                        onClick: {
+                          action: {
+                            actionMethodName: "notification_accept",
+                            parameters: [
+                              { key: "notificationId", value: notificationId },
+                            ],
+                          },
+                        },
+                      },
+                      {
+                        text: "Deny",
+                        onClick: {
+                          action: {
+                            actionMethodName: "notification_deny",
+                            parameters: [
+                              { key: "notificationId", value: notificationId },
+                            ],
+                          },
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      },
+    ],
+  };
+}
+
 /**
  * Determine whether the plugin should respond to this event.
  * Takes the config explicitly so it can be tested without module state.
@@ -337,7 +412,40 @@ async function handleCardClick(
   const methodName = event.action.actionMethodName;
   const params = event.action.parameters ?? [];
 
-  logger.info({ msg: "Card clicked", methodName, params });
+  if (
+    methodName === "notification_accept" ||
+    methodName === "notification_deny"
+  ) {
+    const notifId = params.find((p) => p.key === "notificationId")?.value;
+    if (notifId) {
+      const callbacks = pendingCallbacks.get(notifId);
+      if (callbacks) {
+        try {
+          if (methodName === "notification_accept") {
+            await callbacks.onAccept?.();
+          } else {
+            await callbacks.onDeny?.();
+          }
+        } catch (error: unknown) {
+          logger?.error?.({
+            msg: `Error in ${methodName} callback`,
+            notifId,
+            error: String(error),
+          });
+        } finally {
+          pendingCallbacks.delete(notifId);
+        }
+      }
+      const label =
+        methodName === "notification_accept" ? "accepted" : "denied";
+      return {
+        actionResponse: { type: "UPDATE_MESSAGE" },
+        text: `Friend request ${label}.`,
+      };
+    }
+  }
+
+  logger?.info?.({ msg: "Card clicked", methodName, params });
 
   return {
     actionResponse: { type: "UPDATE_MESSAGE" },
@@ -637,7 +745,15 @@ const registeredCommands: Map<string, ChannelCommand> = new Map();
 const registeredParsers: Map<string, ChannelMessageParser> = new Map();
 let botUsername = "WOPR";
 
-function buildChannelProvider(): ChannelProvider {
+interface GoogleChatChannelProvider extends ChannelProvider {
+  sendNotification(
+    channelId: string,
+    payload: ChannelNotificationPayload,
+    callbacks?: ChannelNotificationCallbacks,
+  ): Promise<void>;
+}
+
+function buildChannelProvider(): GoogleChatChannelProvider {
   return {
     id: "googlechat",
 
@@ -702,6 +818,57 @@ function buildChannelProvider(): ChannelProvider {
 
     getBotUsername(): string {
       return botUsername;
+    },
+
+    async sendNotification(
+      channelId: string,
+      payload: ChannelNotificationPayload,
+      callbacks?: ChannelNotificationCallbacks,
+    ): Promise<void> {
+      if (payload.type !== "friend-request") return;
+      if (!chatClient) {
+        logger?.error?.({
+          msg: "Cannot send notification — Google Chat API client not initialized",
+        });
+        return;
+      }
+
+      const notificationId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const fromLabel = payload.from ?? payload.pubkey ?? "unknown peer";
+      const spaceName = channelId.startsWith("spaces/")
+        ? channelId
+        : `spaces/${channelId}`;
+
+      const cardBody = buildNotificationCard(
+        notificationId,
+        payload.from,
+        agentIdentity.name ?? "WOPR",
+        payload.pubkey,
+      );
+
+      try {
+        await chatClient.spaces.messages.create({
+          parent: spaceName,
+          requestBody: cardBody,
+        });
+
+        if (callbacks) {
+          pendingCallbacks.set(notificationId, callbacks);
+        }
+
+        logger?.info?.({
+          msg: "Friend request notification sent",
+          channelId,
+          from: fromLabel,
+          notificationId,
+        });
+      } catch (err: unknown) {
+        logger?.error?.({
+          msg: "Failed to send notification to Google Chat",
+          channelId,
+          error: String(err),
+        });
+      }
     },
   };
 }
@@ -838,6 +1005,7 @@ const plugin: WOPRPlugin = {
     // Clear channel maps
     registeredCommands.clear();
     registeredParsers.clear();
+    pendingCallbacks.clear();
 
     logger?.info("Google Chat plugin shut down");
     chatClient = null;
