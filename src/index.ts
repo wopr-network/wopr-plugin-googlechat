@@ -46,7 +46,13 @@ let configUnsub: (() => void) | null = null;
 let isShuttingDown = false;
 let logger: winston.Logger;
 
-export const pendingCallbacks = new Map<string, ChannelNotificationCallbacks>();
+export const pendingCallbacks = new Map<
+  string,
+  {
+    callbacks: ChannelNotificationCallbacks;
+    timer: ReturnType<typeof setTimeout>;
+  }
+>();
 
 // ============================================================================
 // Logger
@@ -265,6 +271,7 @@ export function buildNotificationCard(
   from: string | undefined,
   agentName: string,
   pubkey?: string,
+  withButtons = true,
 ): {
   cardsV2: Array<{
     cardId: string;
@@ -297,38 +304,48 @@ export function buildNotificationCard(
                 },
               ],
             },
-            {
-              widgets: [
-                {
-                  buttonList: {
-                    buttons: [
+            ...(withButtons
+              ? [
+                  {
+                    widgets: [
                       {
-                        text: "Accept",
-                        onClick: {
-                          action: {
-                            function: "notification_accept",
-                            parameters: [
-                              { key: "notificationId", value: notificationId },
-                            ],
-                          },
-                        },
-                      },
-                      {
-                        text: "Deny",
-                        onClick: {
-                          action: {
-                            function: "notification_deny",
-                            parameters: [
-                              { key: "notificationId", value: notificationId },
-                            ],
-                          },
+                        buttonList: {
+                          buttons: [
+                            {
+                              text: "Accept",
+                              onClick: {
+                                action: {
+                                  function: "notification_accept",
+                                  parameters: [
+                                    {
+                                      key: "notificationId",
+                                      value: notificationId,
+                                    },
+                                  ],
+                                },
+                              },
+                            },
+                            {
+                              text: "Deny",
+                              onClick: {
+                                action: {
+                                  function: "notification_deny",
+                                  parameters: [
+                                    {
+                                      key: "notificationId",
+                                      value: notificationId,
+                                    },
+                                  ],
+                                },
+                              },
+                            },
+                          ],
                         },
                       },
                     ],
                   },
-                },
-              ],
-            },
+                ]
+              : []),
           ],
         },
       },
@@ -424,18 +441,21 @@ async function handleCardClick(
   ) {
     const notifId = params.find((p) => p.key === "notificationId")?.value;
     if (notifId) {
-      const callbacks = pendingCallbacks.get(notifId);
-      if (!callbacks) {
+      const entry = pendingCallbacks.get(notifId);
+      // Delete BEFORE await to prevent double-execution on concurrent clicks
+      pendingCallbacks.delete(notifId);
+      if (!entry) {
         return {
           actionResponse: { type: "UPDATE_MESSAGE" },
           text: "Unknown or expired notification.",
         };
       }
+      clearTimeout(entry.timer);
       try {
         if (methodName === "notification_accept") {
-          await callbacks.onAccept?.();
+          await entry.callbacks.onAccept?.();
         } else {
-          await callbacks.onDeny?.();
+          await entry.callbacks.onDeny?.();
         }
       } catch (error: unknown) {
         logger?.error?.({
@@ -443,13 +463,11 @@ async function handleCardClick(
           notifId,
           error: String(error),
         });
-        pendingCallbacks.delete(notifId);
         return {
           actionResponse: { type: "UPDATE_MESSAGE" },
           text: "An error occurred processing your response.",
         };
       }
-      pendingCallbacks.delete(notifId);
       const label =
         methodName === "notification_accept" ? "accepted" : "denied";
       return {
@@ -853,21 +871,23 @@ function buildChannelProvider(): GoogleChatChannelProvider {
         ? channelId
         : `spaces/${channelId}`;
 
+      const withButtons = !!(callbacks?.onAccept ?? callbacks?.onDeny);
       const cardBody = buildNotificationCard(
         notificationId,
         payload.from,
         agentIdentity.name ?? "WOPR",
         payload.pubkey,
+        withButtons,
       );
 
       // Register callbacks BEFORE API call to avoid race condition (Bug 4)
       if (callbacks) {
-        pendingCallbacks.set(notificationId, callbacks);
-        // 5-minute TTL to prevent stale entry accumulation (Bug 3)
-        setTimeout(
+        // 5-minute TTL; timer stored so it can be cancelled on callback execution
+        const timer = setTimeout(
           () => pendingCallbacks.delete(notificationId),
           5 * 60 * 1000,
         );
+        pendingCallbacks.set(notificationId, { callbacks, timer });
       }
 
       try {
